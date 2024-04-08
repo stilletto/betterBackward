@@ -39,25 +39,33 @@ def GPT_trainer(input_text,predicted_text,ground_truth_text):
                     "predicted_text": predicted_text,
                     "ground_truth_text": ground_truth_text})
 
-    response = client.chat.completions.create(
-        model="gpt-4-turbo-preview",
-        messages=[
-            {
-                "role": "system",
-                "content": "Your task is to evaluate the text according to the following rules. You will have the ground_truth_text and the predicted_text. If the predicted_text is an adequate part of the ground_truth_text, simply repeat it. If the last word or part of a word of the predicted_text is incorrect, then change the text so that it is as similar as possible in the arrangement of words and their choice to the predicted_text but in meaning is similar to the ground_truth_text. That is, correct it, trying to minimally change the predicted_text. But if the predicted_text is correct, including the correct part, do not change it, do not answer anything unnecessary, just return it as is. Examples:\nCorrect:\n{\"input_text\": \"Какой самый большой город России?\",\n\"predicted_text\": \"Москв\",\n\"ground_truth_text\": \"Самый большой город России - Москва\"\n}\nIt is correct predicted part of text. Because it is part of right answer \"Москва\" . You must to return \"Москв\"\n\nIncorrect:\n {\"input_text\": \"Какой самый большой город России?\",\n\"predicted_text\": \"Москву\",\n\"ground_truth_text\": \"Самый большой город России - Москва\"\n}\nIt is incorrect predicted part of text. Because last latter is wrong. You must to return \"Москва\" because it is most close right answer\n\nCorrect:\n{\"input_text\": \"Какой самый большой город России?\",\n\"predicted_text\": \"Насколько я знаю Москва\",\n\"ground_truth_text\": \"Самый большой город России - Москва\"\n}\nIt is correct predicted text or part of text. Because it is content right. The sentence is constructed differently, but the meaning is the same and it is correct . You must to return \"Насколько я знаю Москва\"\n\nCorrect:\n{\"input_text\": \"Какой самый большой город России?\",\n\"predicted_text\": \"Мо\",\n\"ground_truth_text\": \"Самый большой город России - Москва\",\n}\nIt is correct predicted part of text. Because it is part of right answer \"Москва\". You must to return \"Мо\"\n\nCorrect:\n{\"input_text\": \"Какой самый большой город Юпитера?\",\n\"predicted_text\": \"Не\",\n\"ground_truth_text\": \"На Юпитере нет городов.\"\n}\nIt is correct predicted part of text. Because further the phrase can be predicted as, for example, “I don’t know” or “There are no cities on Jupiter” and these will be the correct answers, so we consider this the correct beginning of the phrase.  You must to return \"Не\"\n\n\nIncorrect:\n{\"input_text\": \"Какой самый большой город Юпитера?\",\n\"predicted_text\": \"..i\",\n\"ground_truth_text\": \"На Юпитере нет городов.\"\n}\nIt is incorrect predicted part of text.  This is the wrong beginning of a phrase, no matter what the next phrase is, the correct answer can hardly begin like that. Therefore, return the same token in the account, which is the last in this case. Since the correct first one would be \"На\". You must to return \"На\"\n"
-            },
-            {
-                "role": "user",
-                "content": "{\"input_text\":" + question + " }"
-            }
-        ],
-        temperature=1,
-        max_tokens=2048,
-        top_p=1,
-        frequency_penalty=0,
-        presence_penalty=0
-    )
-    response = response.choices[0].message.content
+    rejected_text = "I'm sorry, I can't answer that question. Please ask me something else."
+    for _ in range(10):
+        response = client.chat.completions.create(
+            model="gpt-4-turbo-preview",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Your task is to evaluate the text according to the following rules. You will have the ground_truth_text and the predicted_text. If the predicted_text is an adequate part of the ground_truth_text, simply repeat it. If the last word or part of a word of the predicted_text is incorrect, then change the text so that it is as similar as possible in the arrangement of words and their choice to the predicted_text but in meaning is similar to the ground_truth_text. That is, correct it, trying to minimally change the predicted_text. But if the predicted_text is correct, including the correct part, do not change it, do not answer anything unnecessary, just return it as is. Examples:\nCorrect:\n{\"input_text\": \"Какой самый большой город России?\",\n\"predicted_text\": \"Москв\",\n\"ground_truth_text\": \"Самый большой город России - Москва\"\n}\nIt is correct predicted part of text. Because it is part of right answer \"Москва\" . You must to return \"Москв\"\n\nIncorrect:\n {\"input_text\": \"Какой самый большой город России?\",\n\"predicted_text\": \"Москву\",\n\"ground_truth_text\": \"Самый большой город России - Москва\"\n}\nIt is incorrect predicted part of text. Because last latter is wrong. You must to return \"Москва\" because it is most close right answer\n\nCorrect:\n{\"input_text\": \"Какой самый большой город России?\",\n\"predicted_text\": \"Насколько я знаю Москва\",\n\"ground_truth_text\": \"Самый большой город России - Москва\"\n}\nIt is correct predicted text or part of text. Because it is content right. The sentence is constructed differently, but the meaning is the same and it is correct . You must to return \"Насколько я знаю Москва\"\n\nCorrect:\n{\"input_text\": \"Какой самый большой город России?\",\n\"predicted_text\": \"Мо\",\n\"ground_truth_text\": \"Самый большой город России - Москва\",\n}\nIt is correct predicted part of text. Because it is part of right answer \"Москва\". You must to return \"Мо\"\n\nCorrect:\n{\"input_text\": \"Какой самый большой город Юпитера?\",\n\"predicted_text\": \"Не\",\n\"ground_truth_text\": \"На Юпитере нет городов.\"\n}\nIt is correct predicted part of text. Because further the phrase can be predicted as, for example, “I don’t know” or “There are no cities on Jupiter” and these will be the correct answers, so we consider this the correct beginning of the phrase.  You must to return \"Не\"\n\n\nIncorrect:\n{\"input_text\": \"Какой самый большой город Юпитера?\",\n\"predicted_text\": \"..i\",\n\"ground_truth_text\": \"На Юпитере нет городов.\"\n}\nIt is incorrect predicted part of text.  This is the wrong beginning of a phrase, no matter what the next phrase is, the correct answer can hardly begin like that. Therefore, return the same token in the account, which is the last in this case. Since the correct first one would be \"На\". You must to return \"На\"\n\nAdditional instructions:\nIf there are obvious errors in the predicted text, correct them in your answer. For example: \"predicted_text\" = \"The sea was compassionately yellow\" We can assume that the sea was yellow, for example in a fantasy work, if in the general sense it agrees with ground_truth_text, but it could not possibly be \"compassionately yellow\" Therefore, we need to return \"The sea was yellow\" or if it should have been blue based on ground_truth_text or if there is no reason to believe that it could have been yellow then the answer will be \"The sea was blue\"\nIf the predicted text is a response to a request to write some kind of free story, then return everything as is, correcting only spelling errors, factual errors and errors in the coordination of sentences, as well as errors when the style of the text clearly does not correspond to the request. When correcting them, try to keep all the text as much as possible in the same form as it was in predicted_text\n"
+                },
+                {
+                    "role": "user",
+                    "content": "{\"input_text\":" + question + " }"
+                }
+            ],
+            temperature=1,
+            max_tokens=2048,
+            top_p=1,
+            frequency_penalty=0,
+            presence_penalty=0
+        )
+        response = response.choices[0].message.content
+        if rejected_text not in response:
+            break
+    if '"' == response[0]:
+        response = response[1:]
+    if '"' == response[-1]:
+        response = response[:-1]
     print(response)
     return str(response)
 

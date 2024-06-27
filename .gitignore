@@ -155,3 +155,5 @@ cython_debug/
 /new_model
 /logs
 /wandb
+/checkpoint-1050
+/checkpoint-2100

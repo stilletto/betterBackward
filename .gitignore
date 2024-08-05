@@ -157,3 +157,5 @@ cython_debug/
 /wandb
 /checkpoint-1050
 /checkpoint-2100
+/checkpoint-142300
+/mistral-7B

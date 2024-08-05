@@ -1,3 +1,4 @@
+import random
 import time
 import threading
 import keyboard  # библиотека для отслеживания нажатий клавиш
@@ -22,8 +23,9 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Chem import rdMolDescriptors
 from accelerate import init_empty_weights, load_checkpoint_and_dispatch
-
-
+import sentencepiece
+import bitsandbytes
+import wandb
 # Имя файла-сигнала
 signal_file = 'stop_signal.txt'
 
@@ -50,10 +52,11 @@ custom_loss = True
 lora = True
 #model_name = "models/mistral"
 base_model = "models/mistral-inst"
+base_model = "models/Mistral-7B-finetuned"
+base_model = "models/Mistral-chem-finetuned7"
 inst_model = True
 #base_model = "models/Mistral-7B-finetuned"
 model_name = base_model
-model_name = "results/checkpoint-42600"
 device = "cuda"
 
 separator0 = "[INST]"
@@ -82,6 +85,37 @@ tokenizer.pad_token = tokenizer.eos_token
 
 if tokenizer.pad_token is None:
     tokenizer.add_special_tokens({'pad_token': '[PAD]'})
+
+
+def merge_model(base_path, adapter_path, save_to):
+    base_model = AutoModelForCausalLM.from_pretrained(
+        base_path,
+        return_dict=True,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+    )
+
+    tokenizer = AutoTokenizer.from_pretrained(base_path)
+
+    # Add/set tokens (same 5 lines of code we used before training)
+    tokenizer.pad_token = "</s>"
+    tokenizer.add_tokens(["<|im_start|>"])
+    tokenizer.add_special_tokens(dict(eos_token="<|im_end|>"))
+    base_model.resize_token_embeddings(len(tokenizer))
+    base_model.config.eos_token_id = tokenizer.eos_token_id
+
+    # Load LoRA adapter and merge
+    model = PeftModel.from_pretrained(base_model, adapter_path)
+    model = model.merge_and_unload()
+
+    model.save_pretrained(save_to, safe_serialization=True, max_shard_size='22GB')
+    tokenizer.save_pretrained(save_to)
+
+
+# merge_model(base_model, "checkpoint-142300", "models/Mistral-chem-finetuned7")
+# print("merged")
+# time.sleep(1000)
+
 
 class CustomDataCollator(DataCollatorForLanguageModeling):
     def __init__(self, tokenizer, mlm: bool = False):
@@ -198,6 +232,21 @@ def loss_for_smiles(output):
                     return 0.1
             return 1
 
+
+def generate_random_smiles(smiles):
+    # generate random SMILES from original canonical
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        print(f"wrong smiles={smiles}")
+        print(is_valid_smiles(smiles))
+        return None  # Возвращаем None, если SMILES некорректный
+
+    # Генерируем случайную SMILES строку
+    random_smiles = Chem.MolToSmiles(mol, doRandom=True)
+
+    return random_smiles
+
+
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 
 class advanced_SFTTrainer(SFTTrainer):
@@ -220,6 +269,10 @@ class advanced_SFTTrainer(SFTTrainer):
         pref = pref.split(separator1)[0] + separator1
         after_inst = decoded_labels[0].split(separator1)[1]
         label_list = after_inst.split(",")
+
+        random_label_inputs = 0
+        if len(label_list) > 1:
+            random_label_inputs = random.randrange(0, len(label_list))
         labels = []
         max_length_input = len(decoded_inputs[0])
         for alt in label_list:
@@ -227,17 +280,26 @@ class advanced_SFTTrainer(SFTTrainer):
             if len(a) > max_length_input:
                 max_length_input = len(a)
         i = 0
-        for alt in label_list:
-            a = pref + alt
+        for _ in range(10):
+            for alt in label_list:
+                alt = generate_random_smiles(alt)
+                if not alt:
+                    continue
+                a = pref + alt
 
-            combo_label = [a]
-            if i == 0:
-                decoded_inputs = combo_label
-            i += 1
-            new_alt = self.tokenizer.batch_encode_plus(
-                combo_label, padding='max_length', max_length=max_length_input, truncation=False, return_tensors='pt'
-            )['input_ids']
-            labels.append(new_alt)
+                combo_label = [a]
+                if i == random_label_inputs:
+                    decoded_inputs = combo_label
+                i += 1
+                new_alt = self.tokenizer.batch_encode_plus(
+                    combo_label, padding='max_length', max_length=max_length_input, truncation=False, return_tensors='pt'
+                )['input_ids']
+                labels.append(new_alt)
+            if len(label_list)<=0:
+                print("DATASET CORRUPTED!!!")
+                time.sleep(99999)
+
+
         new_input_ids = self.tokenizer.batch_encode_plus(
             decoded_inputs,
             padding='max_length',
@@ -288,7 +350,7 @@ else:
         peft_config = LoraConfig(
             lora_alpha=16,
             lora_dropout=0.1,
-            r=128,
+            r=1024,
             bias="none",
             task_type="CAUSAL_LM",
             # use_rslora=True,
@@ -318,7 +380,7 @@ else:
         model.config.use_cache = False
 
 LR = 0.0002
-epochs = 30
+epochs = 100
 max_length = 3000
 expected_max_tokens = 1000
 
@@ -425,34 +487,6 @@ else:
             )
 
 
-def merge_model(base_path, adapter_path, save_to):
-    base_model = AutoModelForCausalLM.from_pretrained(
-        base_path,
-        return_dict=True,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
-    )
-
-    tokenizer = AutoTokenizer.from_pretrained(base_path)
-
-    # Add/set tokens (same 5 lines of code we used before training)
-    tokenizer.pad_token = "</s>"
-    tokenizer.add_tokens(["<|im_start|>"])
-    tokenizer.add_special_tokens(dict(eos_token="<|im_end|>"))
-    base_model.resize_token_embeddings(len(tokenizer))
-    base_model.config.eos_token_id = tokenizer.eos_token_id
-
-    # Load LoRA adapter and merge
-    model = PeftModel.from_pretrained(base_model, adapter_path)
-    model = model.merge_and_unload()
-
-    model.save_pretrained(save_to, safe_serialization=True, max_shard_size='22GB')
-    tokenizer.save_pretrained(save_to)
-
-
-merge_model(base_model, model_name, "models/Mistral-7B-finetuned")
-print("merged")
-time.sleep(1000)
 
 def handle_stop_signal(signal_file):
     global trainer

@@ -112,7 +112,7 @@ def merge_model(base_path, adapter_path, save_to):
     tokenizer.save_pretrained(save_to)
 
 
-# merge_model(base_model, "checkpoint-142300", "models/Mistral-chem-finetuned7")
+# merge_model(base_model, "checkpoint-4050", "models/Mistral-chem-finetuned7")
 # print("merged")
 # time.sleep(1000)
 
@@ -321,6 +321,76 @@ class advanced_SFTTrainer(SFTTrainer):
             alternative_loss = self.label_smoother(outputs, alt_label, shift_labels=True)
             alternative_losses.append(alternative_loss)
         min_loss = torch.min(torch.stack(alternative_losses)).to(model.device) * loss_multiplier
+        print(f"minimal loss={min_loss}")
+        return (min_loss, outputs) if return_outputs else min_loss
+
+
+    def compute_loss_only_one_token(self, model, inputs, return_outputs=False):
+        input_ids = inputs.get('input_ids')
+
+        label = inputs.pop('labels')
+        decoded_inputs = self.tokenizer.batch_decode(input_ids, skip_special_tokens=True)
+        decoded_labels = decoded_inputs
+        decoded_inputs = [decoded_inputs[0].split(",")[0]]
+        #print("Decoded inputs: ", decoded_inputs)
+        pref = decoded_labels[0].split(",")[0]
+        #print("Decoded labels: ", decoded_labels)
+        pref = pref.split(separator1)[0] + separator1
+        after_inst = decoded_labels[0].split(separator1)[1]
+        label_list = after_inst.split(",")
+
+        random_label_inputs = 0
+        if len(label_list) > 1:
+            random_label_inputs = random.randrange(0, len(label_list))
+        labels = []
+        max_length_input = len(decoded_inputs[0])
+        for alt in label_list:
+            a = alt
+            if len(a) > max_length_input:
+                max_length_input = len(a)
+        i = 0
+        for _ in range(10):
+            for alt in label_list:
+                alt = generate_random_smiles(alt)
+                if not alt:
+                    continue
+                a = pref
+
+                combo_label = [a]
+                if i == random_label_inputs:
+                    decoded_inputs = combo_label
+                i += 1
+                new_alt = self.tokenizer.batch_encode_plus(
+                    combo_label, padding='max_length', max_length=max_length_input, truncation=False, return_tensors='pt'
+                )['input_ids']
+                labels.append(new_alt)
+            if len(label_list)<=0:
+                print("DATASET CORRUPTED!!!")
+                time.sleep(99999)
+
+
+        new_input_ids = self.tokenizer.batch_encode_plus(
+            decoded_inputs,
+            padding='max_length',
+            truncation=False,
+            max_length=max_length_input,
+            return_tensors='pt'
+        )['input_ids']
+        #new_attention_mask = torch.where(new_input_ids != 0, torch.tensor(1), torch.tensor(0)).to(model.device)
+        inputs.update({'input_ids': new_input_ids, 'labels': labels[0]})
+        outputs = model(**inputs)
+        logits = outputs.logits
+        decoded_outputs = self.tokenizer.batch_decode(torch.argmax(logits, dim=-1), skip_special_tokens=True)
+        print("Decoded inputs: ", decoded_inputs)
+        print("Decoded outputs: ", decoded_outputs)
+        loss_multiplier = loss_for_smiles(decoded_outputs[0])
+        print(f"Loss multiplies={loss_multiplier}")
+        alternative_losses = []
+        for alt_label in labels:
+            alternative_loss = self.label_smoother(outputs, alt_label, shift_labels=True)
+            alternative_losses.append(alternative_loss)
+        min_loss = torch.min(torch.stack(alternative_losses)).to(model.device) * loss_multiplier
+        print(f"minimal loss={min_loss}")
         return (min_loss, outputs) if return_outputs else min_loss
 
 bnb_config = BitsAndBytesConfig(
